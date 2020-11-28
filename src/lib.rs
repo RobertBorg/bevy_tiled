@@ -2,6 +2,7 @@ use bevy::{prelude::*, render::render_graph::RenderGraph};
 
 mod loader;
 mod map;
+mod tiled_map;
 pub use map::*;
 mod pipeline;
 pub use pipeline::*;
@@ -16,7 +17,7 @@ impl Plugin for TiledMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_asset::<map::Map>()
             .init_asset_loader::<loader::TiledMapLoader>()
-            .add_system(process_loaded_tile_maps.system());
+            .add_system(process_loaded_tile_maps);
 
         let resources = app.resources();
         let mut render_graph = resources.get_mut::<RenderGraph>().unwrap();

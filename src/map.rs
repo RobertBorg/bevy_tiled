@@ -1,5 +1,7 @@
+use crate::tiled_map::{TiledMap, TiledTileset};
 use anyhow::Result;
 use bevy::{
+    asset::LoadContext,
     prelude::*,
     render::mesh::Indices,
     render::{
@@ -8,6 +10,7 @@ use bevy::{
         pipeline::{DynamicBinding, PipelineSpecialization, RenderPipeline},
         render_graph::base::MainPass,
     },
+    utils::BoxedFuture,
     utils::HashMap,
 };
 use bevy_type_registry::TypeUuid;
@@ -46,7 +49,7 @@ pub struct Layer {
 #[derive(Debug, TypeUuid)]
 #[uuid = "5f6fbac8-3f52-424e-a928-561667fea074"]
 pub struct Map {
-    pub map: tiled::Map,
+    pub map: TiledMap,
     pub meshes: Vec<(u32, u32, Mesh)>,
     pub layers: Vec<Layer>,
     pub tile_size: Vec2,
@@ -55,49 +58,52 @@ pub struct Map {
 
 impl Map {
     pub fn project_ortho(pos: Vec2, tile_width: f32, tile_height: f32) -> Vec2 {
-        let x = tile_width * pos.x();
-        let y = tile_height * pos.y();
+        let x = tile_width * pos.x;
+        let y = tile_height * pos.y;
         Vec2::new(x, -y)
     }
     pub fn unproject_ortho(pos: Vec2, tile_width: f32, tile_height: f32) -> Vec2 {
-        let x = pos.x() / tile_width;
-        let y = -(pos.y()) / tile_height;
+        let x = pos.x / tile_width;
+        let y = -(pos.y) / tile_height;
         Vec2::new(x, y)
     }
     pub fn project_iso(pos: Vec2, tile_width: f32, tile_height: f32) -> Vec2 {
-        let x = (pos.x() - pos.y()) * tile_width / 2.0;
-        let y = (pos.x() + pos.y()) * tile_height / 2.0;
+        let x = (pos.x - pos.y) * tile_width / 2.0;
+        let y = (pos.x + pos.y) * tile_height / 2.0;
         Vec2::new(x, -y)
     }
     pub fn unproject_iso(pos: Vec2, tile_width: f32, tile_height: f32) -> Vec2 {
         let half_width = tile_width / 2.0;
         let half_height = tile_height / 2.0;
-        let x = ((pos.x() / half_width) + (-(pos.y()) / half_height)) / 2.0;
-        let y = ((-(pos.y()) / half_height) - (pos.x() / half_width)) / 2.0;
+        let x = ((pos.x / half_width) + (-(pos.y) / half_height)) / 2.0;
+        let y = ((-(pos.y) / half_height) - (pos.x / half_width)) / 2.0;
         Vec2::new(x.round(), y.round())
     }
     pub fn center(&self, origin: Transform) -> Transform {
         let tile_size = Vec2::new(self.map.tile_width as f32, self.map.tile_height as f32);
         let map_center = Vec2::new(self.map.width as f32 / 2.0, self.map.height as f32 / 2.0);
-        match self.map.orientation {
-            tiled::Orientation::Orthogonal => {
-                let center = Map::project_ortho(map_center, tile_size.x(), tile_size.y());
-                Transform::from_matrix(
-                    origin.compute_matrix() * Mat4::from_translation(-center.extend(0.0)),
-                )
-            }
+        /*match self.map.orientation {
+        tiled::Orientation::Orthogonal => {*/
+        let center = Map::project_ortho(map_center, tile_size.x, tile_size.y);
+        Transform::from_matrix(
+            origin.compute_matrix() * Mat4::from_translation(-center.extend(0.0)),
+        )
+        /*}
             tiled::Orientation::Isometric => {
-                let center = Map::project_iso(map_center, tile_size.x(), tile_size.y());
+                let center = Map::project_iso(map_center, tile_size.x, tile_size.y);
                 Transform::from_matrix(
-                    origin.compute_matrix() * Mat4::from_translation(-center.extend(0.0)),
+                    origin.compute_matrix * Mat4::from_translation(-center.extend(0.0)),
                 )
             }
             _ => panic!("Unsupported orientation {:?}", self.map.orientation),
-        }
+        }*/
     }
 
-    pub fn try_from_bytes(asset_path: &Path, bytes: Vec<u8>) -> Result<Map> {
-        let map = tiled::parse_with_path(BufReader::new(bytes.as_slice()), asset_path).unwrap();
+    pub async fn try_from_bytes<'a>(
+        bytes: Vec<u8>,
+        load_context: &'a mut LoadContext<'_>,
+    ) -> BoxedFuture<'a, Result<Map>> {
+        let map = TiledMap::from_bytes(bytes.as_slice());
 
         let mut layers = Vec::new();
 
@@ -114,10 +120,14 @@ impl Map {
             }
             let mut tileset_layers = Vec::new();
 
-            for tileset in map.tilesets.iter() {
-                let tile_width = tileset.tile_width as f32;
-                let tile_height = tileset.tile_height as f32;
-                let image = tileset.images.first().unwrap();
+            for map_tileset in map.tilesets.iter() {
+                let tileset_path = load_context.path().join(map_tileset.source);
+                let tileset_bytes = load_context.read_asset_bytes(tileset_path).await;
+                let tileset = TiledTileset::from_bytes(tileset_bytes);
+
+                let tile_width = map_tileset.tile_width as f32;
+                let tile_height = map_tileset.tile_height as f32;
+                let image = map_tileset.images.first().unwrap();
                 let texture_width = image.width as f32;
                 let texture_height = image.height as f32;
                 let columns = (texture_width / tile_width).floor();
@@ -140,22 +150,24 @@ impl Map {
                                     && lookup_y < map.height as usize
                                 {
                                     // New Tiled crate code:
-                                    let map_tile = match &layer.tiles {
-                                        tiled::LayerData::Finite(tiles) => {
-                                            &tiles[lookup_y][lookup_x]
-                                        }
+                                    let map_tile = /*match &layer.tiles {
+                                        tiled::LayerData::Finite(tiles) => {*/
+                                            &layer.tiles[lookup_y*map.width as usize + lookup_x]
+                                        /*}
                                         _ => panic!("Infinte maps not supported"),
-                                    };
+                                    }*/;
 
-                                    let tile = map_tile.gid;
-                                    if tile < tileset.first_gid
-                                        || tile >= tileset.first_gid + tileset.tilecount.unwrap()
+                                    let tile = map_tile;
+                                    if *tile < map_tileset.first_gid
+                                        || *tile
+                                            >= map_tileset.first_gid
+                                                + map_tileset.tilecount.unwrap()
                                     {
                                         continue;
                                     }
 
                                     let tile = (TiledMapLoader::remove_tile_flags(tile) as f32)
-                                        - tileset.first_gid as f32;
+                                        - map_tileset.first_gid as f32;
 
                                     // This calculation is much simpler we only care about getting the remainder
                                     // and multiplying that by the tile width.
@@ -170,8 +182,8 @@ impl Map {
                                         (tile / columns).floor() * tile_height;
 
                                     // Calculate positions
-                                    let (start_x, end_x, start_y, end_y) = match map.orientation {
-                                        tiled::Orientation::Orthogonal => {
+                                    let (start_x, end_x, start_y, end_y) = /*match map.orientation {
+                                        tiled::Orientation::Orthogonal => */{
                                             let center = Map::project_ortho(
                                                 Vec2::new(lookup_x as f32, lookup_y as f32),
                                                 tile_width,
@@ -179,18 +191,18 @@ impl Map {
                                             );
 
                                             let start = Vec2::new(
-                                                center.x() - tile_width / 2.0,
-                                                center.y() - tile_height / 2.0,
+                                                center.x - tile_width / 2.0,
+                                                center.y - tile_height / 2.0,
                                             );
 
                                             let end = Vec2::new(
-                                                center.x() + tile_width / 2.0,
-                                                center.y() + tile_height / 2.0,
+                                                center.x + tile_width / 2.0,
+                                                center.y + tile_height / 2.0,
                                             );
 
-                                            (start.x(), end.x(), start.y(), end.y())
-                                        }
-                                        tiled::Orientation::Isometric => {
+                                            (start.x, end.x, start.y, end.y)
+                                        // }
+                                        /*tiled::Orientation::Isometric => {
                                             let center = Map::project_iso(
                                                 Vec2::new(lookup_x as f32, lookup_y as f32),
                                                 tile_width,
@@ -198,20 +210,20 @@ impl Map {
                                             );
 
                                             let start = Vec2::new(
-                                                center.x() - tile_width / 2.0,
-                                                center.y() - tile_height / 2.0,
+                                                center.x - tile_width / 2.0,
+                                                center.y - tile_height / 2.0,
                                             );
 
                                             let end = Vec2::new(
-                                                center.x() + tile_width / 2.0,
-                                                center.y() + tile_height / 2.0,
+                                                center.x + tile_width / 2.0,
+                                                center.y + tile_height / 2.0,
                                             );
 
-                                            (start.x(), end.x(), start.y(), end.y())
-                                        }
-                                        _ => {
+                                            (start.x, end.x, start.y, end.y)
+                                        }*/
+                                        /*_ => {
                                             panic!("Unsupported orientation {:?}", map.orientation)
-                                        }
+                                        }*/
                                     };
 
                                     // Calculate UV:
@@ -266,7 +278,7 @@ impl Map {
                 let tileset_layer = TilesetLayer {
                     tile_size: Vec2::new(tile_width, tile_height),
                     chunks,
-                    tileset_guid: tileset.first_gid,
+                    tileset_guid: map_tileset.first_gid,
                 };
                 tileset_layers.push(tileset_layer);
             }
@@ -294,20 +306,20 @@ impl Map {
                             }
 
                             // X, Y
-                            positions.push([tile.vertex.x(), tile.vertex.y(), 0.0]);
-                            uvs.push([tile.uv.x(), tile.uv.w()]);
+                            positions.push([tile.vertex.x, tile.vertex.y, 0.0]);
+                            uvs.push([tile.uv.x, tile.uv.w]);
 
                             // X, Y + 1
-                            positions.push([tile.vertex.x(), tile.vertex.w(), 0.0]);
-                            uvs.push([tile.uv.x(), tile.uv.y()]);
+                            positions.push([tile.vertex.x, tile.vertex.w, 0.0]);
+                            uvs.push([tile.uv.x, tile.uv.y]);
 
                             // X + 1, Y + 1
-                            positions.push([tile.vertex.z(), tile.vertex.w(), 0.0]);
-                            uvs.push([tile.uv.z(), tile.uv.y()]);
+                            positions.push([tile.vertex.z, tile.vertex.w, 0.0]);
+                            uvs.push([tile.uv.z, tile.uv.y]);
 
                             // X + 1, Y
-                            positions.push([tile.vertex.z(), tile.vertex.y(), 0.0]);
-                            uvs.push([tile.uv.z(), tile.uv.w()]);
+                            positions.push([tile.vertex.z, tile.vertex.y, 0.0]);
+                            uvs.push([tile.uv.z, tile.uv.w]);
 
                             indices.extend_from_slice(&[i + 0, i + 2, i + 1, i + 0, i + 3, i + 2]);
 
@@ -392,23 +404,8 @@ impl Default for ChunkComponents {
             main_pass: MainPass,
             mesh: Handle::default(),
             material: Handle::default(),
-            render_pipeline: RenderPipelines::from_pipelines(vec![RenderPipeline::specialized(
+            render_pipeline: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
                 TILE_MAP_PIPELINE_HANDLE,
-                PipelineSpecialization {
-                    dynamic_bindings: vec![
-                        // Transform
-                        DynamicBinding {
-                            bind_group: 2,
-                            binding: 0,
-                        },
-                        // Tile map chunk data
-                        DynamicBinding {
-                            bind_group: 2,
-                            binding: 1,
-                        },
-                    ],
-                    ..Default::default()
-                },
             )]),
             transform: Default::default(),
             global_transform: Default::default(),
