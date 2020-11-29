@@ -2,6 +2,7 @@ use crate::map::Map;
 use anyhow::Result;
 use bevy::{
     asset::{AssetLoader, LoadContext, LoadedAsset},
+    prelude::info,
     utils::BoxedFuture,
 };
 
@@ -25,10 +26,11 @@ impl AssetLoader for TiledMapLoader {
     fn load<'a>(
         &'a self,
         bytes: &'a [u8],
-        load_context: &'a mut LoadContext,
+        mut load_context: &'a mut LoadContext,
     ) -> BoxedFuture<'a, Result<(), anyhow::Error>> {
         Box::pin(async move {
             let map = Map::try_from_bytes(bytes.into(), &mut load_context).await?;
+            info!("{}", map.map.tile_width);
             load_context.set_default_asset(LoadedAsset::new(map));
             Ok(())
         })

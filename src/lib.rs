@@ -1,3 +1,4 @@
+#![feature(async_closure)]
 use bevy::{prelude::*, render::render_graph::RenderGraph};
 
 mod loader;

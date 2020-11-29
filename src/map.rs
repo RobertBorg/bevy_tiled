@@ -1,13 +1,11 @@
-use crate::tiled_map::{TiledMap, TiledTileset};
+use crate::tiled_map::{TiledCombinedMap, TiledCombinedTileset, TiledMap, TiledTileset};
 use anyhow::Result;
 use bevy::{
     asset::LoadContext,
     prelude::*,
     render::mesh::Indices,
     render::{
-        mesh::VertexAttributeValues,
-        pipeline::PrimitiveTopology,
-        pipeline::{DynamicBinding, PipelineSpecialization, RenderPipeline},
+        mesh::VertexAttributeValues, pipeline::PrimitiveTopology, pipeline::RenderPipeline,
         render_graph::base::MainPass,
     },
     utils::BoxedFuture,
@@ -16,8 +14,9 @@ use bevy::{
 use bevy_type_registry::TypeUuid;
 
 use crate::{loader::TiledMapLoader, TileMapChunk, TILE_MAP_PIPELINE_HANDLE};
+use futures::stream::{self, StreamExt};
 use glam::Vec2;
-use std::{collections::HashSet, io::BufReader, path::Path};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct Tile {
@@ -49,7 +48,7 @@ pub struct Layer {
 #[derive(Debug, TypeUuid)]
 #[uuid = "5f6fbac8-3f52-424e-a928-561667fea074"]
 pub struct Map {
-    pub map: TiledMap,
+    pub map: TiledCombinedMap,
     pub meshes: Vec<(u32, u32, Mesh)>,
     pub layers: Vec<Layer>,
     pub tile_size: Vec2,
@@ -102,7 +101,7 @@ impl Map {
     pub async fn try_from_bytes<'a>(
         bytes: Vec<u8>,
         load_context: &'a mut LoadContext<'_>,
-    ) -> BoxedFuture<'a, Result<Map>> {
+    ) -> Result<Map> {
         let map = TiledMap::from_bytes(bytes.as_slice());
 
         let mut layers = Vec::new();
@@ -114,20 +113,37 @@ impl Map {
         let chunk_size_y = (map.height as f32 / target_chunk_y as f32).ceil().max(1.0) as usize;
         let tile_size = Vec2::new(map.tile_width as f32, map.tile_height as f32);
 
+        let asset_path = load_context.path();
+
+        let combined_tilesets_stream =
+            stream::iter(map.tilesets.into_iter()).then(|map_tileset| async {
+                let tileset_path = load_context
+                    .path()
+                    .parent()
+                    .unwrap()
+                    .join(map_tileset.source);
+                let tileset_bytes = load_context.read_asset_bytes(tileset_path).await.unwrap();
+                let tileset = TiledTileset::from_bytes(&tileset_bytes);
+                TiledCombinedTileset {
+                    first_gid: map_tileset.first_gid,
+                    tile_width: tileset.tile_width,
+                    tile_height: tileset.tile_height,
+                    tile_count: tileset.tile_count,
+                    images: tileset.images,
+                }
+            });
+
+        let combined_tilesets = combined_tilesets_stream.collect::<Vec<_>>().await;
         for layer in map.layers.iter() {
             if !layer.visible {
                 continue;
             }
             let mut tileset_layers = Vec::new();
 
-            for map_tileset in map.tilesets.iter() {
-                let tileset_path = load_context.path().join(map_tileset.source);
-                let tileset_bytes = load_context.read_asset_bytes(tileset_path).await;
-                let tileset = TiledTileset::from_bytes(tileset_bytes);
-
-                let tile_width = map_tileset.tile_width as f32;
-                let tile_height = map_tileset.tile_height as f32;
-                let image = map_tileset.images.first().unwrap();
+            for tileset in combined_tilesets.iter() {
+                let tile_width = tileset.tile_width as f32;
+                let tile_height = tileset.tile_height as f32;
+                let image = tileset.images.first().unwrap();
                 let texture_width = image.width as f32;
                 let texture_height = image.height as f32;
                 let columns = (texture_width / tile_width).floor();
@@ -158,16 +174,14 @@ impl Map {
                                     }*/;
 
                                     let tile = map_tile;
-                                    if *tile < map_tileset.first_gid
-                                        || *tile
-                                            >= map_tileset.first_gid
-                                                + map_tileset.tilecount.unwrap()
+                                    if *tile < tileset.first_gid
+                                        || *tile >= tileset.first_gid + tileset.tile_count
                                     {
                                         continue;
                                     }
 
-                                    let tile = (TiledMapLoader::remove_tile_flags(tile) as f32)
-                                        - map_tileset.first_gid as f32;
+                                    let tile = (TiledMapLoader::remove_tile_flags(*tile) as f32)
+                                        - tileset.first_gid as f32;
 
                                     // This calculation is much simpler we only care about getting the remainder
                                     // and multiplying that by the tile width.
@@ -234,19 +248,19 @@ impl Map {
                                     let mut end_v: f32 =
                                         (sprite_sheet_y + tile_height) / texture_height;
 
-                                    if map_tile.flip_h {
-                                        let temp_startu = start_u;
-                                        start_u = end_u;
-                                        end_u = temp_startu;
-                                    }
-                                    if map_tile.flip_v {
-                                        let temp_startv = start_v;
-                                        start_v = end_v;
-                                        end_v = temp_startv;
-                                    }
+                                    // if map_tile.flip_h {
+                                    //     let temp_startu = start_u;
+                                    //     start_u = end_u;
+                                    //     end_u = temp_startu;
+                                    // }
+                                    // if map_tile.flip_v {
+                                    //     let temp_startv = start_v;
+                                    //     start_v = end_v;
+                                    //     end_v = temp_startv;
+                                    // }
 
                                     Tile {
-                                        tile_id: map_tile.gid,
+                                        tile_id: *map_tile,
                                         pos: Vec2::new(tile_x as f32, tile_y as f32),
                                         vertex: Vec4::new(start_x, start_y, end_x, end_y),
                                         uv: Vec4::new(start_u, start_v, end_u, end_v),
@@ -278,7 +292,7 @@ impl Map {
                 let tileset_layer = TilesetLayer {
                     tile_size: Vec2::new(tile_width, tile_height),
                     chunks,
-                    tileset_guid: map_tileset.first_gid,
+                    tileset_guid: tileset.first_gid,
                 };
                 tileset_layers.push(tileset_layer);
             }
@@ -341,15 +355,22 @@ impl Map {
             }
         }
 
-        let map = Map {
-            map,
+        let combined_map = TiledCombinedMap {
+            width: map.width,
+            height: map.height,
+            tile_width: map.tile_width,
+            tile_height: map.tile_height,
+            layers: map.layers,
+            tilesets: combined_tilesets,
+        };
+
+        Ok(Map {
+            map: combined_map,
             meshes,
             layers,
             tile_size,
             image_folder: asset_path.parent().unwrap().into(),
-        };
-
-        Ok(map)
+        })
     }
 }
 
@@ -414,7 +435,7 @@ impl Default for ChunkComponents {
 }
 
 pub fn process_loaded_tile_maps(
-    mut commands: Commands,
+    commands: &mut Commands,
     asset_server: Res<AssetServer>,
     mut state: Local<MapResourceProviderState>,
     map_events: Res<Events<AssetEvent<Map>>>,

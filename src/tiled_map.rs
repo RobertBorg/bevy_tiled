@@ -25,19 +25,38 @@ pub struct TiledMap {
     pub layers: Vec<TiledLayer>,
     pub tilesets: Vec<TiledMapTileset>,
 }
+
+#[derive(Debug)]
+pub struct TiledCombinedMap {
+    pub width: u32,
+    pub height: u32,
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub layers: Vec<TiledLayer>,
+    pub tilesets: Vec<TiledCombinedTileset>,
+}
 #[derive(Debug)]
 pub struct TiledTileset {
-    tile_width: f32,
-    tile_height: f32,
-    tile_count: u32,
-    images: Vec<TiledTilesetImage>,
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub tile_count: u32,
+    pub images: Vec<TiledTilesetImage>,
+}
+
+#[derive(Debug)]
+pub struct TiledCombinedTileset {
+    pub first_gid: u32,
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub tile_count: u32,
+    pub images: Vec<TiledTilesetImage>,
 }
 
 #[derive(Debug)]
 pub struct TiledTilesetImage {
-    source: String,
-    width: u32,
-    height: u32,
+    pub source: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl TiledMap {
@@ -84,29 +103,6 @@ impl TiledMap {
                             }
                         }
                     }
-                    b"tileset" => {
-                        let first_gid = None;
-                        let source = None;
-                        for attr in e.attributes() {
-                            let a = attr.unwrap();
-                            match a.key {
-                                b"firstgid" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    let value = str.parse::<u32>().unwrap();
-                                    first_gid = Some(value);
-                                }
-                                b"firstgid" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    source = Some(str);
-                                }
-                                _ => {}
-                            }
-                        }
-                        tilesets.push(TiledMapTileset {
-                            first_gid: first_gid.unwrap(),
-                            source: source.unwrap().to_owned(),
-                        });
-                    }
                     b"layer" => {
                         let mut name = None;
                         let mut visible = true;
@@ -190,7 +186,7 @@ impl TiledMap {
                                                     }
 
                                                     layers.push(TiledLayer {
-                                                        name: name,
+                                                        name: name.clone(),
                                                         visible: visible,
                                                         tiles: data,
                                                     });
@@ -207,6 +203,32 @@ impl TiledMap {
                                 _ => {}
                             }
                         }
+                    }
+                    _ => (),
+                },
+                Ok(Event::Empty(ref e)) => match e.name() {
+                    b"tileset" => {
+                        let mut first_gid = None;
+                        let mut source = None;
+                        for attr in e.attributes() {
+                            let a = attr.unwrap();
+                            match a.key {
+                                b"firstgid" => {
+                                    let str = std::str::from_utf8(&a.value).unwrap();
+                                    let value = str.parse::<u32>().unwrap();
+                                    first_gid = Some(value);
+                                }
+                                b"source" => {
+                                    let str = std::str::from_utf8(&a.value).unwrap().to_string();
+                                    source = Some(str);
+                                }
+                                _ => {}
+                            }
+                        }
+                        tilesets.push(TiledMapTileset {
+                            first_gid: first_gid.unwrap(),
+                            source: source.unwrap().to_owned(),
+                        });
                     }
                     _ => (),
                 },
@@ -237,9 +259,9 @@ impl TiledTileset {
 
         let mut images = Vec::new();
 
-        let mut width = None;
-        let mut height = None;
-        let mut timecount = None;
+        let mut tile_width = None;
+        let mut tile_height = None;
+        let mut tile_count = None;
 
         let mut buf = Vec::new();
 
@@ -251,149 +273,53 @@ impl TiledTileset {
                         for attr in e.attributes() {
                             let a = attr.unwrap();
                             match a.key {
-                                b"height" => {
+                                b"tilecount" => {
                                     let str = std::str::from_utf8(&a.value).unwrap();
-                                    map_height = Some(str.parse::<u32>().unwrap());
-                                }
-                                b"width" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    map_width = Some(str.parse::<u32>().unwrap());
+                                    tile_count = Some(str.parse::<u32>().unwrap());
                                 }
                                 b"tileheight" => {
                                     let str = std::str::from_utf8(&a.value).unwrap();
-                                    map_tileheight = Some(str.parse::<u32>().unwrap());
+                                    tile_height = Some(str.parse::<u32>().unwrap());
                                 }
                                 b"tilewidth" => {
                                     let str = std::str::from_utf8(&a.value).unwrap();
-                                    map_tilewidth = Some(str.parse::<u32>().unwrap());
+                                    tile_width = Some(str.parse::<u32>().unwrap());
                                 }
                                 _ => {}
                             }
                         }
                     }
-                    b"tileset" => {
-                        let first_gid = None;
-                        let source = None;
+
+                    _ => (),
+                },
+                Ok(Event::Empty(ref e)) => match e.name() {
+                    b"image" => {
+                        let mut source = None;
+                        let mut width = None;
+                        let mut height = None;
                         for attr in e.attributes() {
                             let a = attr.unwrap();
                             match a.key {
-                                b"firstgid" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    let value = str.parse::<u32>().unwrap();
-                                    first_gid = Some(value);
-                                }
-                                b"firstgid" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
+                                b"source" => {
+                                    let str = std::str::from_utf8(&a.value).unwrap().to_string();
                                     source = Some(str);
                                 }
+                                b"width" => {
+                                    let str = std::str::from_utf8(&a.value).unwrap();
+                                    width = Some(str.parse::<u32>().unwrap());
+                                }
+                                b"height" => {
+                                    let str = std::str::from_utf8(&a.value).unwrap();
+                                    height = Some(str.parse::<u32>().unwrap());
+                                }
                                 _ => {}
                             }
                         }
-                        tilesets.push(TiledMapTileset {
-                            first_gid: first_gid.unwrap(),
+                        images.push(TiledTilesetImage {
                             source: source.unwrap().to_owned(),
+                            width: width.expect("should be set on image"),
+                            height: height.expect("should be set on image"),
                         });
-                    }
-                    b"layer" => {
-                        let mut name = None;
-                        let mut visible = true;
-                        for attr in e.attributes() {
-                            let a = attr.unwrap();
-                            match a.key {
-                                b"name" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    name = Some(str.to_string());
-                                }
-                                // b"width" => {
-                                //     let str = std::str::from_utf8(&a.value).unwrap();
-                                //     width = Some(str.parse::<u16>().unwrap());
-                                // }
-                                // b"height" => {
-                                //     let str = std::str::from_utf8(&a.value).unwrap();
-                                //     height = Some(str.parse::<u16>().unwrap());
-                                // }
-                                b"visible" => {
-                                    let str = std::str::from_utf8(&a.value).unwrap();
-                                    visible = str.parse::<bool>().unwrap();
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        let name = name.expect("name not set on layer");
-                        let width = map_width.unwrap();
-                        let height = map_height.unwrap();
-
-                        let mut encoding = None;
-
-                        let mut state_is_in_data = false;
-                        loop {
-                            match reader.read_event(&mut buf) {
-                                Ok(Event::Start(ref e)) => match e.name() {
-                                    b"data" => {
-                                        state_is_in_data = true;
-                                        for attr in e.attributes() {
-                                            let a = attr.expect("data to have attributes");
-                                            match a.key {
-                                                b"encoding" => {
-                                                    let str =
-                                                        std::str::from_utf8(&a.value).unwrap();
-                                                    encoding = Some(str.to_string());
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                },
-                                Ok(Event::End(ref e)) => {
-                                    if e.name() == b"data" {
-                                        state_is_in_data = false;
-                                    } else if e.name() == b"layer" {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Text(ref text)) => {
-                                    if state_is_in_data {
-                                        match encoding {
-                                            Some(ref str) => match str.as_str() {
-                                                "base64" => {
-                                                    let bytes = base64::decode(
-                                                        text.unescape_and_decode_without_bom(
-                                                            &reader,
-                                                        )
-                                                        .unwrap()
-                                                        .as_bytes(),
-                                                    )
-                                                    .expect("malformed layer data");
-                                                    let mut rdr = Cursor::new(bytes);
-                                                    let mut data = Vec::with_capacity(
-                                                        (width * height) as usize,
-                                                    );
-                                                    for _ in 0..(width * height) {
-                                                        data.push(
-                                                            rdr.read_u32::<LittleEndian>().unwrap(),
-                                                        )
-                                                    }
-
-                                                    layers.push(TiledLayer {
-                                                        name: name,
-                                                        visible: visible,
-                                                        tiles: data,
-                                                    });
-                                                }
-                                                _ => {
-                                                    panic!("layer data must be encoded with base64")
-                                                }
-                                            },
-
-                                            None => panic!("layer data must have a set encoding"),
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
                     }
                     _ => (),
                 },
