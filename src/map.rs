@@ -1,4 +1,6 @@
-use crate::tiled_map::{TiledCombinedMap, TiledCombinedTileset, TiledMap, TiledTileset};
+use crate::tiled_map::{
+    TiledCombinedMap, TiledCombinedTileset, TiledMap, TiledTileset, TiledTilesetImage,
+};
 use anyhow::Result;
 use bevy::{
     asset::LoadContext,
@@ -11,7 +13,7 @@ use bevy::{
     utils::BoxedFuture,
     utils::HashMap,
 };
-use bevy_type_registry::TypeUuid;
+use bevy_reflect::TypeUuid;
 
 use crate::{loader::TiledMapLoader, TileMapChunk, TILE_MAP_PIPELINE_HANDLE};
 use futures::stream::{self, StreamExt};
