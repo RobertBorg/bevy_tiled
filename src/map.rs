@@ -6,6 +6,7 @@ use bevy::{
     asset::LoadContext,
     prelude::*,
     render::mesh::Indices,
+    render::pipeline::PipelineDescriptor,
     render::{
         mesh::VertexAttributeValues, pipeline::PrimitiveTopology, pipeline::RenderPipeline,
         render_graph::base::MainPass,
@@ -17,7 +18,6 @@ use bevy_reflect::TypeUuid;
 
 use crate::{loader::TiledMapLoader, TileMapChunk, TILE_MAP_PIPELINE_HANDLE};
 use futures::stream::{self, StreamExt};
-use glam::Vec2;
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -439,7 +439,7 @@ impl Default for ChunkComponents {
             mesh: Handle::default(),
             material: Handle::default(),
             render_pipeline: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
-                TILE_MAP_PIPELINE_HANDLE,
+                TILE_MAP_PIPELINE_HANDLE.typed::<PipelineDescriptor>(),
             )]),
             transform: Default::default(),
             global_transform: Default::default(),
@@ -470,9 +470,9 @@ pub fn process_loaded_tile_maps(
             AssetEvent::Created { handle } => {
                 changed_maps.insert(handle.clone());
             }
-             AssetEvent::Modified { handle } => {
-                 changed_maps.insert(handle.clone());
-             }
+            AssetEvent::Modified { handle } => {
+                changed_maps.insert(handle.clone());
+            }
             AssetEvent::Removed { handle } => {
                 // if mesh was modified and removed in the same update, ignore the modification
                 // events are ordered so future modification events are ok

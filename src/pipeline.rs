@@ -1,6 +1,9 @@
 use crate::TileMapChunk;
 use bevy::{
+    asset::Handle,
+    asset::HandleId,
     prelude::*,
+    reflect::TypeUuid,
     render::{
         pipeline::{
             BlendDescriptor, BlendFactor, BlendOperation, ColorStateDescriptor, ColorWrite,
@@ -12,10 +15,9 @@ use bevy::{
         texture::TextureFormat,
     },
 };
-use bevy_reflect::TypeUuid;
 
-pub const TILE_MAP_PIPELINE_HANDLE: Handle<PipelineDescriptor> =
-    Handle::weak_from_u64(PipelineDescriptor::TYPE_UUID, 4129645945969645246);
+pub const TILE_MAP_PIPELINE_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(PipelineDescriptor::TYPE_UUID, 4129645945969645246);
 
 pub fn build_tile_map_pipeline(shaders: &mut Assets<Shader>) -> PipelineDescriptor {
     PipelineDescriptor {
