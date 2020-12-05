@@ -484,12 +484,13 @@ pub fn process_loaded_tile_maps(
 
     let mut new_meshes = HashMap::<&Handle<Map>, Vec<(u32, u32, Handle<Mesh>)>>::default();
     for changed_map in changed_maps.iter() {
-        let map = maps.get_mut(changed_map).unwrap();
-
+        let map = maps.get(changed_map).unwrap();
+        let mut need_new_meshes = false;
         // ensure resources are loaded for map
         for (_, _, _, mut materials_map, _) in query.iter_mut() {
             for tileset in &map.map.tilesets {
                 if !materials_map.contains_key(&tileset.first_gid) {
+                    need_new_meshes = true;
                     let texture_path = map
                         .image_folder
                         .join(tileset.images.first().unwrap().source.as_str());
@@ -499,15 +500,18 @@ pub fn process_loaded_tile_maps(
             }
         }
 
-        for mesh in map.meshes.drain(0..map.meshes.len()) {
-            let handle = meshes.add(mesh.2);
-            if new_meshes.contains_key(changed_map) {
-                let mesh_list = new_meshes.get_mut(changed_map).unwrap();
-                mesh_list.push((mesh.0, mesh.1, handle));
-            } else {
-                let mut mesh_list = Vec::new();
-                mesh_list.push((mesh.0, mesh.1, handle));
-                new_meshes.insert(changed_map, mesh_list);
+        if need_new_meshes {
+            let map = maps.get_mut(changed_map).unwrap();
+            for mesh in map.meshes.drain(0..map.meshes.len()) {
+                let handle = meshes.add(mesh.2);
+                if new_meshes.contains_key(changed_map) {
+                    let mesh_list = new_meshes.get_mut(changed_map).unwrap();
+                    mesh_list.push((mesh.0, mesh.1, handle));
+                } else {
+                    let mut mesh_list = Vec::new();
+                    mesh_list.push((mesh.0, mesh.1, handle));
+                    new_meshes.insert(changed_map, mesh_list);
+                }
             }
         }
     }
