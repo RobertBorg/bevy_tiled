@@ -109,8 +109,8 @@ impl Map {
         let target_chunk_x = 32;
         let target_chunk_y = 32;
 
-        let chunk_size_x = (map.width as f32 / target_chunk_x as f32).ceil().max(1.0) as usize;
-        let chunk_size_y = (map.height as f32 / target_chunk_y as f32).ceil().max(1.0) as usize;
+        let chunk_number_x = (map.width as f32 / target_chunk_x as f32).ceil().max(1.0) as usize;
+        let chunk_number_y = (map.height as f32 / target_chunk_y as f32).ceil().max(1.0) as usize;
         let tile_size = Vec2::new(map.tile_width as f32, map.tile_height as f32);
 
         let asset_path = load_context.path();
@@ -122,14 +122,23 @@ impl Map {
                     .parent()
                     .unwrap()
                     .join(map_tileset.source);
-                let tileset_bytes = load_context.read_asset_bytes(tileset_path).await.unwrap();
+                let image_base = tileset_path.parent().expect("tileset_path to have parent");
+                let tileset_bytes = load_context.read_asset_bytes(&tileset_path).await.unwrap();
                 let tileset = TiledTileset::from_bytes(&tileset_bytes);
                 TiledCombinedTileset {
                     first_gid: map_tileset.first_gid,
                     tile_width: tileset.tile_width,
                     tile_height: tileset.tile_height,
                     tile_count: tileset.tile_count,
-                    images: tileset.images,
+                    images: tileset
+                        .images
+                        .iter()
+                        .map(|image| TiledTilesetImage {
+                            width: image.width,
+                            height: image.height,
+                            source: image_base.join(&image.source).to_str().unwrap().to_owned(),
+                        })
+                        .collect::<Vec<_>>(),
                 }
             });
 
@@ -150,9 +159,9 @@ impl Map {
 
                 let mut chunks = Vec::new();
                 // 32 x 32 tile chunk sizes
-                for chunk_x in 0..chunk_size_x {
+                for chunk_x in 0..chunk_number_x {
                     let mut chunks_y = Vec::new();
-                    for chunk_y in 0..chunk_size_y {
+                    for chunk_y in 0..chunk_number_y {
                         let mut tiles = Vec::new();
 
                         for tile_x in 0..target_chunk_x {
@@ -168,24 +177,26 @@ impl Map {
                                     // New Tiled crate code:
                                     let map_tile = /*match &layer.tiles {
                                         tiled::LayerData::Finite(tiles) => {*/
-                                            &layer.tiles[lookup_y*map.width as usize + lookup_x]
+                                            layer.tiles[lookup_y*map.width as usize + lookup_x]
                                         /*}
                                         _ => panic!("Infinte maps not supported"),
                                     }*/;
 
                                     let tile = map_tile;
-                                    if *tile < tileset.first_gid
-                                        || *tile >= tileset.first_gid + tileset.tile_count
+                                    if tile < tileset.first_gid
+                                        || tile >= tileset.first_gid + tileset.tile_count
                                     {
                                         continue;
                                     }
 
-                                    let tile = (TiledMapLoader::remove_tile_flags(*tile) as f32)
-                                        - tileset.first_gid as f32;
+                                    let tile = (TiledMapLoader::remove_tile_flags(tile)
+                                        - tileset.first_gid)
+                                        as f32;
 
                                     // This calculation is much simpler we only care about getting the remainder
                                     // and multiplying that by the tile width.
-                                    let sprite_sheet_x: f32 = (tile % columns * tile_width).floor();
+                                    let sprite_sheet_x: f32 =
+                                        ((tile % columns) * tile_width).floor();
 
                                     // Calculation here is (tile / columns).round_down * tile_height
                                     // Example: tile 30 / 28 columns = 1.0714 rounded down to 1 * 16 tile_height = 16 Y
@@ -260,7 +271,7 @@ impl Map {
                                     // }
 
                                     Tile {
-                                        tile_id: *map_tile,
+                                        tile_id: map_tile,
                                         pos: Vec2::new(tile_x as f32, tile_y as f32),
                                         vertex: Vec4::new(start_x, start_y, end_x, end_y),
                                         uv: Vec4::new(start_u, start_v, end_u, end_v),
@@ -452,18 +463,20 @@ pub fn process_loaded_tile_maps(
 ) {
     let mut changed_maps = HashSet::<Handle<Map>>::new();
     for event in state.map_event_reader.iter(&map_events) {
+        info!("map_event: {:#?}", &event);
         match event {
             AssetEvent::Created { handle } => {
                 changed_maps.insert(handle.clone());
             }
-            AssetEvent::Modified { handle } => {
-                changed_maps.insert(handle.clone());
-            }
+             AssetEvent::Modified { handle } => {
+                 changed_maps.insert(handle.clone());
+             }
             AssetEvent::Removed { handle } => {
                 // if mesh was modified and removed in the same update, ignore the modification
                 // events are ordered so future modification events are ok
                 changed_maps.remove(handle);
             }
+            _ => (),
         }
     }
 
@@ -471,6 +484,7 @@ pub fn process_loaded_tile_maps(
     for changed_map in changed_maps.iter() {
         let map = maps.get_mut(changed_map).unwrap();
 
+        // ensure resources are loaded for map
         for (_, _, _, mut materials_map, _) in query.iter_mut() {
             for tileset in &map.map.tilesets {
                 if !materials_map.contains_key(&tileset.first_gid) {
